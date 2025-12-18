@@ -1,0 +1,7 @@
+{
+  "name": "Spelling Bee Kids",
+  "description": "A calm, educational, and phonics-focused spelling game for kids aged 4-10, featuring high-quality AI-generated audio and positive reinforcement.",
+  "requestFramePermissions": [
+    "microphone"
+  ]
+}
