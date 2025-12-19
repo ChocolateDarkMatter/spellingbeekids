@@ -1,0 +1,9 @@
+version: "3.9"
+services:
+  spellingbeekids:
+    build: .
+    ports:
+      - "3000:3000"
+    environment:
+      # Override if your Parot host is different
+      - VITE_PAROT_BASE_URL=http://100.105.231.83:8880

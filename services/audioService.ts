@@ -1,90 +1,84 @@
+const DEFAULT_PAROT_BASE = "http://100.105.231.83:8880";
 
-import { GoogleGenAI, Modality } from "@google/genai";
+// Voice IDs exposed by Parot (subset of the available list from /openapi.json).
+export type ParotVoice =
+  | "af_bella"
+  | "af_aoede"
+  | "af_nicole"
+  | "af_river"
+  | "am_michael"
+  | "am_liam"
+  | "bm_george"
+  | "bm_lewis";
 
-// Standard Base64 Decode
-function decode(base64: string) {
-  const binaryString = atob(base64);
-  const len = binaryString.length;
-  const bytes = new Uint8Array(len);
-  for (let i = 0; i < len; i++) {
-    bytes[i] = binaryString.charCodeAt(i);
-  }
-  return bytes;
-}
-
-// Standard Audio Buffer Decoder for Raw PCM
-async function decodeAudioData(
-  data: Uint8Array,
-  ctx: AudioContext,
-  sampleRate: number,
-  numChannels: number,
-): Promise<AudioBuffer> {
-  const dataInt16 = new Int16Array(data.buffer);
-  const frameCount = dataInt16.length / numChannels;
-  const buffer = ctx.createBuffer(numChannels, frameCount, sampleRate);
-
-  for (let channel = 0; channel < numChannels; channel++) {
-    const channelData = buffer.getChannelData(channel);
-    for (let i = 0; i < frameCount; i++) {
-      channelData[i] = dataInt16[i * numChannels + channel] / 32768.0;
-    }
-  }
-  return buffer;
-}
+type CacheKey = `${ParotVoice}:${string}`;
 
 export class AudioService {
   private audioCtx: AudioContext | null = null;
-  private ai: GoogleGenAI;
-  private cache: Map<string, AudioBuffer> = new Map();
-  private pendingRequests: Map<string, Promise<AudioBuffer | null>> = new Map();
+  private cache: Map<CacheKey, AudioBuffer> = new Map();
+  private pendingRequests: Map<CacheKey, Promise<AudioBuffer | null>> = new Map();
+  private baseUrl: string;
 
   constructor() {
-    this.ai = new GoogleGenAI({ apiKey: process.env.API_KEY || '' });
+    this.baseUrl = (import.meta as any).env?.VITE_PAROT_BASE_URL || DEFAULT_PAROT_BASE;
   }
 
   private initContext() {
     if (!this.audioCtx) {
-      this.audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 24000 });
+      this.audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
     }
-    if (this.audioCtx.state === 'suspended') {
+    if (this.audioCtx.state === "suspended") {
       this.audioCtx.resume();
     }
     return this.audioCtx;
   }
 
+  private async fetchFromParot(text: string, voice: ParotVoice): Promise<AudioBuffer | null> {
+    const url = `${this.baseUrl.replace(/\/$/, "")}/v1/audio/speech`;
+    const resp = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ input: text, voice }),
+    });
+
+    if (!resp.ok) {
+      let errText = `${resp.status}`;
+      try {
+        const errJson = await resp.json();
+        errText = errJson?.detail?.message || JSON.stringify(errJson);
+      } catch {
+        errText = await resp.text();
+      }
+      console.error("Parot TTS failed:", errText);
+      return null;
+    }
+
+    const arrayBuffer = await resp.arrayBuffer();
+    const ctx = this.initContext();
+    try {
+      // Some browsers require a copy of the buffer for decodeAudioData
+      const bufferCopy = arrayBuffer.slice(0);
+      const audioBuffer = await ctx.decodeAudioData(bufferCopy);
+      return audioBuffer;
+    } catch (e) {
+      console.error("decodeAudioData failed", e);
+      return null;
+    }
+  }
+
   /**
-   * Generates audio for text and stores it in cache without playing.
+   * Fetch audio and prime the cache without playback.
    */
-  async prefetch(text: string, voice: 'Kore' | 'Puck' | 'Zephyr' = 'Kore'): Promise<void> {
+  async prefetch(text: string, voice: ParotVoice): Promise<void> {
     if (!text) return;
-    const cacheKey = `${voice}:${text}`;
+    const cacheKey: CacheKey = `${voice}:${text}`;
     if (this.cache.has(cacheKey) || this.pendingRequests.has(cacheKey)) return;
 
     const fetchPromise = (async () => {
       try {
-        const response = await this.ai.models.generateContent({
-          model: "gemini-2.5-flash-preview-tts",
-          contents: [{ parts: [{ text: `Say clearly: ${text}` }] }],
-          config: {
-            responseModalities: [Modality.AUDIO],
-            speechConfig: {
-              voiceConfig: {
-                prebuiltVoiceConfig: { voiceName: voice },
-              },
-            },
-          },
-        });
-
-        const base64Audio = response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
-        if (!base64Audio) return null;
-
-        const ctx = this.initContext();
-        const buffer = await decodeAudioData(decode(base64Audio), ctx, 24000, 1);
-        this.cache.set(cacheKey, buffer);
+        const buffer = await this.fetchFromParot(text, voice);
+        if (buffer) this.cache.set(cacheKey, buffer);
         return buffer;
-      } catch (e) {
-        console.error("Prefetch failed for:", text, e);
-        return null;
       } finally {
         this.pendingRequests.delete(cacheKey);
       }
@@ -94,16 +88,14 @@ export class AudioService {
     await fetchPromise;
   }
 
-  async speak(text: string, voice: 'Kore' | 'Puck' | 'Zephyr' = 'Kore') {
+  async speak(text: string, voice: ParotVoice) {
     if (!text) return;
-    const cacheKey = `${voice}:${text}`;
+    const cacheKey: CacheKey = `${voice}:${text}`;
     let buffer = this.cache.get(cacheKey);
 
     if (!buffer) {
       const pending = this.pendingRequests.get(cacheKey);
-      if (pending) {
-        buffer = (await pending) || undefined;
-      }
+      if (pending) buffer = (await pending) || undefined;
     }
 
     if (!buffer) {
@@ -127,7 +119,7 @@ export class AudioService {
 
   private fallbackSpeak(text: string) {
     const utterance = new SpeechSynthesisUtterance(text);
-    utterance.rate = 0.8;
+    utterance.rate = 0.9;
     window.speechSynthesis.speak(utterance);
   }
 

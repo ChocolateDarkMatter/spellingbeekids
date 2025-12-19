@@ -2,10 +2,14 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { Word, UserProgress, GameState, Difficulty } from './types';
 import { INITIAL_WORDS } from './constants';
-import { audioService } from './services/audioService';
+import { audioService, ParotVoice } from './services/audioService';
 import WordDisplay from './components/WordDisplay';
 import LetterBank from './components/LetterBank';
 import ParentDashboard from './components/ParentDashboard';
+
+const WORD_VOICE: ParotVoice = 'af_bella';
+const SENTENCE_VOICE: ParotVoice = 'bm_george';
+const FEEDBACK_VOICE: ParotVoice = 'af_nicole';
 
 const App: React.FC = () => {
   // --- State ---
@@ -49,18 +53,18 @@ const App: React.FC = () => {
   useEffect(() => {
     // Aggressively prefetch current and next words
     if (currentWord) {
-      audioService.prefetch(currentWord.word, 'Kore');
-      audioService.prefetch(currentWord.sentence, 'Puck');
+      audioService.prefetch(currentWord.word, WORD_VOICE);
+      audioService.prefetch(currentWord.sentence, SENTENCE_VOICE);
     }
     if (nextWord) {
-      audioService.prefetch(nextWord.word, 'Kore');
-      audioService.prefetch(nextWord.sentence, 'Puck');
+      audioService.prefetch(nextWord.word, WORD_VOICE);
+      audioService.prefetch(nextWord.sentence, SENTENCE_VOICE);
     }
     // Prefetch a few more ahead just in case
     const thirdWordIndex = (currentWordIndex + 2) % availableWords.length;
     const thirdWord = availableWords[thirdWordIndex];
     if (thirdWord) {
-      audioService.prefetch(thirdWord.word, 'Kore');
+      audioService.prefetch(thirdWord.word, WORD_VOICE);
     }
   }, [currentWord, nextWord, availableWords, currentWordIndex]);
 
@@ -69,10 +73,10 @@ const App: React.FC = () => {
     if (isSpeaking || !currentWord) return;
     setIsSpeaking(true);
     try {
-      await audioService.speak(currentWord.word, 'Kore');
+      await audioService.speak(currentWord.word, WORD_VOICE);
       if (withSentence) {
         await new Promise(r => setTimeout(r, 400));
-        await audioService.speak(currentWord.sentence, 'Puck');
+        await audioService.speak(currentWord.sentence, SENTENCE_VOICE);
       }
     } finally {
       setIsSpeaking(false);
@@ -124,7 +128,7 @@ const App: React.FC = () => {
       streak: prev.streak + 1
     }));
 
-    await audioService.speak("Great job! That's correct!", 'Zephyr');
+    await audioService.speak("Great job! That's correct!", FEEDBACK_VOICE);
 
     setTimeout(() => {
       setCurrentWordIndex(prev => prev + 1);
@@ -136,7 +140,7 @@ const App: React.FC = () => {
 
   const handleMistake = async () => {
     setGameState('FEEDBACK_TRY_AGAIN');
-    await audioService.speak("Good try! Let's listen again.", 'Kore');
+    await audioService.speak("Good try! Let's listen again.", WORD_VOICE);
     
     setTimeout(() => {
       setGameState('PLAYING');
